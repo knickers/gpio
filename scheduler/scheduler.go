@@ -12,12 +12,19 @@ import (
 )
 
 type Scheduler struct {
-	pins   []gpio.Pin
-	events []chan Event // sorted by next closest event time
+	pins        []gpio.Pin
+	events      []chan Event
+	queueLock   chan []int // index into events list, sorted by next event time
+	nextEvent   chan Event
+	stopWaiting chan bool
 }
 
 func New() *Scheduler {
-	return new(Scheduler)
+	s := new(Scheduler)
+	s.nextEvent = make(chan Event)
+	s.queueLock = make(chan []int, 1)
+	s.queueLock <- []int{}
+	return s
 }
 
 func (s *Scheduler) exists(pin int) int {
@@ -29,7 +36,7 @@ func (s *Scheduler) exists(pin int) int {
 	return -1
 }
 
-func (s *Scheduler) SetPinState(pin int, state gpio.State) {
+func (s *Scheduler) SetPinState(pin int, state gpio.State) error {
 	i := s.exists(pin)
 
 	// This pin doesn't exist yet, create a new one
@@ -37,13 +44,14 @@ func (s *Scheduler) SetPinState(pin int, state gpio.State) {
 		p, err := gpio.NewPin(uint(pin), gpio.OUTPUT)
 		if err != nil {
 			fmt.Println(err)
-			return
+			return err
 		}
 		s.pins = append(s.pins, *p)
 		i = len(s.pins) - 1
 	}
 
 	s.pins[i].SetState(state)
+	return nil
 }
 
 func (s *Scheduler) CloseGPIOPins() {
@@ -53,40 +61,52 @@ func (s *Scheduler) CloseGPIOPins() {
 }
 
 func (s *Scheduler) Pop() (Event, error) {
-	if len(s.events) < 1 {
-		return Event{}, errors.New("The events list is empty")
+	queue := <-s.queueLock
+	if len(queue) == 0 {
+		s.queueLock <- queue
+		return Event{}, errors.New("The events queue is empty")
 	}
-	e := <-s.events[0]
-	if len(s.events) > 1 {
-		s.events = s.events[1:]
+	e := <-s.events[queue[0]]
+	if len(queue) > 1 {
+		queue = queue[1:]
 	} else {
-		s.events = []chan Event{}
+		queue = []int{}
 	}
+	s.queueLock <- queue
 	return e, nil
 }
 
 func (s *Scheduler) Push(e Event) error {
-	evnt := make(chan Event, 1)
-	evnt <- e
-	s.events = append(s.events, evnt)
+	if e.index > 0 && e.index < len(s.events) {
+		s.events[e.index] <- e
+	} else {
+		e.index = len(s.events)
+		evnt := make(chan Event, 1)
+		evnt <- e
+		s.events = append(s.events, evnt)
+		queue := <-s.queueLock
+		queue = append(queue, e.index)
+		s.queueLock <- queue
+	}
 	return nil
 }
 
 func (s *Scheduler) InsertInOrder(e Event) error {
-	ch := make(chan Event, 1)
-	ch <- e
-	s.events = append(s.events, ch)
-	for i := len(s.events) - 2; i >= 0; i-- {
-		evnt := <-s.events[i]
-		if e.NextTime.After(evnt.NextTime) {
-			s.events[i] <- evnt
-			break
+	s.Push(e)
+	queue := <-s.queueLock
+	for i := len(queue) - 2; i >= 0; i-- {
+		evnt := <-s.events[queue[i]]
+		nextTime := evnt.NextTime
+		s.events[queue[i]] <- evnt
+		if e.NextTime.After(nextTime) {
+			s.queueLock <- queue
+			return nil
 		}
-		s.events[i] <- evnt
-		tmp := s.events[i]
-		s.events[i] = s.events[i+1]
-		s.events[i+1] = tmp
+		tmp := queue[i]
+		queue[i] = queue[i+1]
+		queue[i+1] = tmp
 	}
+	s.queueLock <- queue
 	return nil
 }
 
@@ -95,55 +115,70 @@ func (s *Scheduler) GetNextTime() (time.Time, error) {
 		return time.Now(), errors.New("No events in the queue")
 	}
 
-	e := <-s.events[0]
+	q := <-s.queueLock
+	e := <-s.events[q[0]]
 	nextTime := e.NextTime
-	s.events[0] <- e
+	s.events[q[0]] <- e
+	s.queueLock <- q
 
 	return nextTime, nil
 }
 
-func (s *Scheduler) ManageEventQueue() {
-	//log("Entering main loop\n")
+func (s *Scheduler) feedNextEvent() {
 	for {
-		//log("Popping off the next event\n")
-		event, err := s.Pop()
-		if err == nil {
-			now := time.Now()
-
-			fmt.Printf("Sleeping %v till next event at %v...", event.NextTime.Sub(now), event.NextTime)
-			time.Sleep(event.NextTime.Sub(now))
-			fmt.Println("done")
-
-			//log("Setting the gpio pin states to %s.", event.State.String())
-				/*
-			for _, pin := range event.Pins {
-				//log("%d.", pin)
-				err = C.SetPinState(pin, event.state)
-				if err != nil {
-					break
-				}
-			}
-				*/
-			//log("done\n")
-
-			//log("Updating the next time for this event...")
-			err = event.UpdateNextTime()
-			if err != nil {
-				fmt.Println(err)
-				break
-			}
-			//log("done\n")
-
-			//log("Putting this event back on the queue...")
-			err = s.InsertInOrder(event)
-			if err != nil {
-				fmt.Println(err)
-				break
-			}
-			//log("done\n")
-		} else {
-			//log(err.Error() + "\n")
+		nextTime, err := s.GetNextTime()
+		if err != nil {
+			fmt.Println("Didn't find one. Sleeping.")
 			time.Sleep(time.Second)
+			continue
+		}
+
+		timer := time.AfterFunc(nextTime.Sub(time.Now()), func() {
+			e, err := s.Pop()
+			if err == nil {
+				s.nextEvent <- e
+				s.stopWaiting <- true
+			}
+		})
+
+		<-s.stopWaiting
+		timer.Stop()
+	}
+}
+
+func (s *Scheduler) ManageEventQueue() {
+	fmt.Println("Launching the event feeder.")
+	go s.feedNextEvent()
+
+	// main loop
+	for {
+		// wait for the next event
+		fmt.Println("Waiting for an event...")
+		event := <-s.nextEvent
+		fmt.Printf("Got one at %v\n", time.Now())
+
+		// Set the gpio pin states
+			/*
+		for _, pin := range event.Pins {
+			err = C.SetPinState(pin, event.state)
+			if err != nil {
+				break
+			}
+		}
+			*/
+
+		// Update the next time for this event
+		err := event.UpdateNextTime()
+		if err != nil {
+			fmt.Println(err)
+			break
+		}
+
+		// Put this event back on the queue
+		err = s.InsertInOrder(event)
+		if err != nil {
+			fmt.Println(err)
+			break
 		}
 	}
 }
@@ -183,7 +218,7 @@ func (s *Scheduler) GenerateRandomEvents(num int) {
 			}
 			weeks = append(weeks, r)
 		}
-		s.InsertInOrder(Event{pins, state, nextT, days, weeks})
+		s.InsertInOrder(Event{pins, 0, state, nextT, days, weeks})
 	}
 }
 
@@ -221,7 +256,11 @@ func (s *Scheduler) LoadSchedule(file string) error {
 		fmt.Println("Unmarshal:", err)
 		return err
 	}
-	//log("%v\n", events)
+	// The first one needs to be empty
+	e := make(chan Event, 1)
+	e <- Event{}
+	s.events = append(s.events, e)
+	// Put all the rest on too
 	for _, e := range events {
 		err = s.InsertInOrder(e)
 		if err != nil {

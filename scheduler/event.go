@@ -9,6 +9,7 @@ import (
 
 type Event struct {
 	Pins        []int
+	index       int // index into the scheduler's event list
 	State       gpio.State
 	NextTime    time.Time
 	RepeatDays  []bool
