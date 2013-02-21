@@ -63,12 +63,15 @@ func (p *Pin) enable_export() error {
 }
 
 func (p *Pin) SetDirection(dir Direction) error {
-	fd, err := os.OpenFile(fmt.Sprintf("/sys/class/gpio/gpio%d/direction", p.num), os.O_WRONLY|os.O_SYNC, 0666)
-	if err != nil {
-		return err
+	if p.dir != dir {
+		fd, err := os.OpenFile(fmt.Sprintf("/sys/class/gpio/gpio%d/direction", p.num), os.O_WRONLY|os.O_SYNC, 0666)
+		if err != nil {
+			return err
+		}
+		defer fd.Close()
+		fmt.Fprintln(fd, dir.String())
+		p.dir = dir
 	}
-	defer fd.Close()
-	fmt.Fprintln(fd, dir.String())
 	return nil
 }
 
@@ -77,17 +80,24 @@ func (p *Pin) GetDirection() Direction {
 }
 
 func (p *Pin) SetState(st State) error {
-	if p.dir != OUTPUT {
-		return errors.New("This pin is set to " + p.dir.String())
+	var err error
+	if p.state != st {
+		if p.dir != OUTPUT {
+			return errors.New("This pin is set to " + p.dir.String())
+		}
+		fmt.Println("Setting pin", p.num, "to", st.String())
+		_, err = fmt.Fprintln(p.fd, st.NumString())
 	}
-	fmt.Println("Setting pin", p.num, "to", st.String())
-	_, err := fmt.Fprintln(p.fd, st.NumString())
 	return err
 }
 
-func (p *Pin) GetState() (State, error) {
-	st := new(State)
-	return *st, nil
+func (p *Pin) GetState() (st State, err error) {
+	if p.dir == INPUT {
+		st, err = p.state, nil
+	} else if p.dir == OUTPUT {
+		_, err = fmt.Fscan(p.fd, st)
+	}
+	return
 }
 
 func (p *Pin) GetNumber() uint {
