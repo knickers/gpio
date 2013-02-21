@@ -55,3 +55,10 @@ func (e *Event) Update(
 	e.RepeatWeeks = repeatWeeks
 	return nil
 }
+
+func NewEvent(t time.Time) *Event {
+	e := new(Event)
+	e.NextTime = t
+	e.index = -1
+	return e
+}
