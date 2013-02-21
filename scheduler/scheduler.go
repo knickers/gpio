@@ -81,7 +81,7 @@ func (s *Scheduler) Pop() (Event, error) {
 }
 
 func (s *Scheduler) Push(e Event) error {
-	if e.index > 0 && e.index < len(s.events) {
+	if e.index >= 0 && e.index < len(s.events) {
 		s.events[e.index] <- e
 	} else {
 		e.index = len(s.events)
@@ -115,11 +115,10 @@ func (s *Scheduler) InsertInOrder(e Event) error {
 }
 
 func (s *Scheduler) GetNextTime() (time.Time, error) {
-	if len(s.events) == 0 {
+	q := <-s.queueLock
+	if len(q) == 0 {
 		return time.Now(), errors.New("No events in the queue")
 	}
-
-	q := <-s.queueLock
 	e := <-s.events[q[0]]
 	nextTime := e.NextTime
 	s.events[q[0]] <- e
