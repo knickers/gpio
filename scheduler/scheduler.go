@@ -7,12 +7,14 @@ import (
 	"gpio"
 	"io/ioutil"
 	"math/rand"
+	"msg"
 	"os"
 	"time"
 )
 
 type Scheduler struct {
 	pins        []gpio.Pin
+	Stamp       string // string formatting for printing time
 	events      []chan Event
 	queueLock   chan []int // index into events list, sorted by next event time
 	nextEvent   chan Event
@@ -21,6 +23,7 @@ type Scheduler struct {
 
 func New() *Scheduler {
 	s := new(Scheduler)
+	s.Stamp = "Jan 2 2006 at 3:04:05PM"
 	s.nextEvent = make(chan Event)
 	s.queueLock = make(chan []int, 1)
 	s.queueLock <- []int{}
@@ -128,11 +131,12 @@ func (s *Scheduler) feedNextEvent() {
 	for {
 		nextTime, err := s.GetNextTime()
 		if err != nil {
-			fmt.Println("Didn't find one. Sleeping.")
+			msg.Log(" feeder) Didn't find an event. Sleeping.\n")
 			time.Sleep(time.Second)
 			continue
 		}
 
+		msg.Log(" feeder) Next event on %v\n", nextTime.Format(s.Stamp))
 		timer := time.AfterFunc(nextTime.Sub(time.Now()), func() {
 			e, err := s.Pop()
 			if err == nil {
@@ -142,20 +146,23 @@ func (s *Scheduler) feedNextEvent() {
 		})
 
 		<-s.stopWaiting
-		timer.Stop()
+		if timer.Stop() {
+			msg.Log(" feeder) Interrupted while waiting for current event.\n")
+		} else {
+			msg.Log(" feeder) Current event completed.\n")
+		}
 	}
 }
 
 func (s *Scheduler) ManageEventQueue() {
-	fmt.Println("Launching the event feeder.")
 	go s.feedNextEvent()
 
 	// main loop
 	for {
 		// wait for the next event
-		fmt.Println("Waiting for an event...")
+		msg.Log("\nmanager) Waiting for an event...\n")
 		event := <-s.nextEvent
-		fmt.Printf("Got one at %v\n", time.Now())
+		msg.Log("manager) Got one an event.\n")
 
 		// Set the gpio pin states
 			/*
