@@ -27,6 +27,7 @@ func New() *Scheduler {
 	s.nextEvent = make(chan Event)
 	s.queueLock = make(chan []int, 1)
 	s.queueLock <- []int{}
+	s.stopWaiting = make(chan bool)
 	return s
 }
 
@@ -190,22 +191,22 @@ func (s *Scheduler) ManageEventQueue() {
 	}
 }
 
+// Generate num random events. All events will fire at least once in num * 2
+// seconds after starting the program, then they will have random days and weeks
+// in the future where they will fire again. These can be used for anything from
+// filling in a schedule as a template to testing the output system.
 func (s *Scheduler) GenerateRandomEvents(num int) {
 	for i := 0; i < num; i++ {
-		// up to five pins per event
-		n := rand.Int()%5 + 1
+		// up to eight pins per event
+		n := rand.Int()%8 + 1
 		var pins []int
 		for j := 0; j < n; j++ {
 			pins = append(pins, rand.Int()%8)
 		}
 		// on or off
 		state := gpio.State(rand.Int() % 2)
-		// up to twenty seconds in the future
-		dur, err := time.ParseDuration(fmt.Sprintf("%ds", rand.Int()%20+1))
-		if err != nil {
-			fmt.Println(err)
-			break
-		}
+		// up to num*2 seconds in the future
+		dur := time.Second * time.Duration(rand.Int()%(num*2)+1)
 		nextT := time.Now().Add(dur)
 		// choose the days of the week to be applied
 		var days []bool
@@ -225,10 +226,12 @@ func (s *Scheduler) GenerateRandomEvents(num int) {
 			}
 			weeks = append(weeks, r)
 		}
-		s.InsertInOrder(Event{pins, 0, state, nextT, days, weeks})
+		s.InsertInOrder(Event{pins, -1, state, nextT, days, weeks})
 	}
 }
 
+// Save the current in memory schedule out to file as a json encoded object
+// according to schema.json
 func (s *Scheduler) SaveSchedule(file string) error {
 	var events []Event
 	for _, e := range s.events {
@@ -250,6 +253,8 @@ func (s *Scheduler) SaveSchedule(file string) error {
 	return nil
 }
 
+// Load a schedule file into memory. file should be a json encoded file
+// according to schema.json
 func (s *Scheduler) LoadSchedule(file string) error {
 	fp, err := ioutil.ReadFile(file)
 	if err != nil {
@@ -263,11 +268,7 @@ func (s *Scheduler) LoadSchedule(file string) error {
 		fmt.Println("Unmarshal:", err)
 		return err
 	}
-	// The first one needs to be empty
-	e := make(chan Event, 1)
-	e <- Event{}
-	s.events = append(s.events, e)
-	// Put all the rest on too
+	// Put all the events in
 	for _, e := range events {
 		err = s.InsertInOrder(e)
 		if err != nil {
