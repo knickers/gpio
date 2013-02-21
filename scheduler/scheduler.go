@@ -131,12 +131,12 @@ func (s *Scheduler) feedNextEvent() {
 	for {
 		nextTime, err := s.GetNextTime()
 		if err != nil {
-			msg.Log(" feeder) Didn't find an event. Sleeping.\n")
+			msg.Logln(" feeder) Didn't find an event. Sleeping.")
 			time.Sleep(time.Second)
 			continue
 		}
 
-		msg.Log(" feeder) Next event on %v\n", nextTime.Format(s.Stamp))
+		msg.Logf(" feeder) Next event on %v\n", nextTime.Format(s.Stamp))
 		timer := time.AfterFunc(nextTime.Sub(time.Now()), func() {
 			e, err := s.Pop()
 			if err == nil {
@@ -147,9 +147,9 @@ func (s *Scheduler) feedNextEvent() {
 
 		<-s.stopWaiting
 		if timer.Stop() {
-			msg.Log(" feeder) Interrupted while waiting for current event.\n")
+			msg.Logln(" feeder) Interrupted while waiting for current event.")
 		} else {
-			msg.Log(" feeder) Current event completed.\n")
+			msg.Logln(" feeder) Current event completed.")
 		}
 	}
 }
@@ -160,9 +160,9 @@ func (s *Scheduler) ManageEventQueue() {
 	// main loop
 	for {
 		// wait for the next event
-		msg.Log("\nmanager) Waiting for an event...\n")
+		msg.Logln("\nmanager) Waiting for an event...")
 		event := <-s.nextEvent
-		msg.Log("manager) Got one an event.\n")
+		msg.Logln("manager) Got one an event.")
 
 		// Set the gpio pin states
 			/*
