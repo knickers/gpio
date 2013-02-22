@@ -31,7 +31,7 @@ func New() *Scheduler {
 	return s
 }
 
-func (s *Scheduler) exists(pin int) int {
+func (s *Scheduler) hasPin(pin int) int {
 	for i, p := range s.pins {
 		if p.GetNumber() == uint(pin) {
 			return i
@@ -41,9 +41,9 @@ func (s *Scheduler) exists(pin int) int {
 }
 
 func (s *Scheduler) SetPinState(pin int, state gpio.State) error {
-	i := s.exists(pin)
+	i := s.hasPin(pin)
 
-	// This pin doesn't exist yet, create a new one
+	// If this pin doesn't exist yet, create a new one
 	if i == -1 {
 		p, err := gpio.NewPin(uint(pin), gpio.OUTPUT)
 		if err != nil {
@@ -168,14 +168,14 @@ func (s *Scheduler) ManageEventQueue() {
 		msg.Logln("manager) Got one an event.")
 
 		// Set the gpio pin states
-			/*
+		/*
 		for _, pin := range event.Pins {
-			err = C.SetPinState(pin, event.state)
+			err = S.SetPinState(pin, event.state)
 			if err != nil {
 				break
 			}
 		}
-			*/
+		*/
 
 		// Update the next time for this event
 		err := event.UpdateNextTime()
