@@ -114,17 +114,19 @@ func (s *Scheduler) InsertInOrder(e Event) error {
 	return nil
 }
 
-func (s *Scheduler) GetNextTime() (time.Time, error) {
+func (s *Scheduler) GetNextTime() (t time.Time, err error) {
 	q := <-s.queueLock
-	if len(q) == 0 {
-		return time.Now(), errors.New("No events in the queue")
-	}
-	e := <-s.events[q[0]]
-	nextTime := e.NextTime
-	s.events[q[0]] <- e
-	s.queueLock <- q
 
-	return nextTime, nil
+	if len(q) == 0 {
+		err = errors.New("No events in the queue")
+	} else {
+		e := <-s.events[q[0]]
+		t = e.NextTime
+		s.events[q[0]] <- e
+	}
+
+	s.queueLock <- q
+	return
 }
 
 func (s *Scheduler) feedNextEvent() {
