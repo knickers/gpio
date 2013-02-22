@@ -81,17 +81,18 @@ func (s *Scheduler) Pop() (Event, error) {
 }
 
 func (s *Scheduler) Push(e Event) error {
-	if e.index >= 0 && e.index < len(s.events) {
-		s.events[e.index] <- e
+	if e.index != nil && *e.index >= 0 && *e.index < len(s.events) {
+		s.events[*e.index] <- e
 	} else {
-		e.index = len(s.events)
+		e.index = new(int)
+		*e.index = len(s.events)
 		evnt := make(chan Event, 1)
 		evnt <- e
 		s.events = append(s.events, evnt)
-		queue := <-s.queueLock
-		queue = append(queue, e.index)
-		s.queueLock <- queue
 	}
+	queue := <-s.queueLock
+	queue = append(queue, *e.index)
+	s.queueLock <- queue
 	return nil
 }
 
@@ -227,11 +228,17 @@ func (s *Scheduler) GenerateRandomEvents(num int) {
 			}
 			weeks = append(weeks, r)
 		}
-		s.InsertInOrder(Event{pins, -1, state, nextT, days, weeks})
+		s.InsertInOrder(Event{
+			Pins: pins,
+			State: state,
+			NextTime: nextT,
+			RepeatDays: days,
+			RepeatWeeks: weeks,
+		})
 	}
 }
 
-// Save the current in memory schedule out to file as a json encoded object
+// Save the current in-memory schedule to file as a json encoded object
 // according to schema.json
 func (s *Scheduler) SaveSchedule(file string) error {
 	var events []Event

@@ -9,7 +9,7 @@ import (
 
 type Event struct {
 	Pins        []int
-	index       int // index into the scheduler's event list
+	index       *int // index into the scheduler's event list
 	State       gpio.State
 	NextTime    time.Time
 	RepeatDays  []bool
@@ -65,6 +65,5 @@ func (e *Event) Update(
 func NewEvent(t time.Time) *Event {
 	e := new(Event)
 	e.NextTime = t
-	e.index = -1
 	return e
 }
